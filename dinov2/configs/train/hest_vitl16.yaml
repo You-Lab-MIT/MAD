@@ -1,0 +1,23 @@
+train:
+  dataset_path: MorphNeighborhood:root=/data/datasets/MAD/HEST
+  output_dir: ./outputs/hest_vitl16
+  batch_size_per_gpu: 48
+  num_workers: 8
+crops:
+  global_crops_scale:
+    - 0.5
+    - 1.0
+  local_crops_scale:
+    - 0.05
+    - 0.5
+  local_crops_size: 98
+wandb:
+  enabled: true
+  project: hest-dinov2
+  run_name: hest_vitl16
+  log_every: 10
+
+student:
+  patch_size: 14
+  pretrained_weights: /home/exx/Desktop/projects/MAD/DINO/dinov2/checkpoints/dinov2_vitl14_pretrain.pth
+

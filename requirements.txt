@@ -1,0 +1,26 @@
+# Core: PyTorch stack (CUDA 12)
+torch==2.8.0
+torchvision==0.23.0
+xformers==0.0.32.post2
+
+# Core: DINOv2 dependencies
+omegaconf==2.3.0
+fvcore==0.1.5.post20221221
+iopath==0.1.10
+torchmetrics==1.8.2
+
+# Data / IO
+numpy==1.26.4
+pandas==2.2.3
+h5py==3.14.0
+pyarrow==21.0.0
+Pillow==11.0.0
+tqdm==4.67.1
+scipy==1.13.1
+
+# Optional: logging & visualization (uncomment if needed)
+# wandb==0.22.2
+matplotlib
+shapely
+ipykernel
+# seaborn==0.13.2

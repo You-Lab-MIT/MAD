@@ -1,0 +1,33 @@
+build/
+dist/
+*.egg-info/
+**/__pycache__/
+
+**/.ipynb_checkpoints
+**/.ipynb_checkpoints/**
+
+*.swp
+
+.vscode/
+.cursor/
+
+# Virtual environments
+.venv/
+.dinov2/
+
+data/
+scripts/
+# Model outputs / checkpoints
+outputs/
+
+# Data files
+*.parquet
+*.h5
+*.pt
+*.pth
+*.tar.zst
+
+# OS
+.DS_Store
+Thumbs.db
+setup.py
