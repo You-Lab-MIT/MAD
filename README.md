@@ -75,7 +75,7 @@ Note that the root and extra directories do not have to be distinct directories.
 
 ## Training
 
-### Fast setup: training DINOv2 ViT-L/16 on your own dataset 
+### Fast setup: training MAD ViT-L/16 on your own dataset 
 
 Run MAD training on a single A100 nodes (4 GPUs) in a SLURM cluster environment with submitit:
 
