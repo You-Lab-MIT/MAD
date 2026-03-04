@@ -336,6 +336,153 @@ class MorphologyNeighborhoodAugmentation(object):
         return output
 
 
+class MorphologyNeighborhoodSameViewAugmentation(object):
+    """
+    Same-view only: student morph vs teacher morph, student micro vs teacher micro.
+    Like standard DINO but with two independent streams (morphology and microenvironment).
+    Outputs 4 global crops: [morph_1, morph_2, micro_1, micro_2], 1 local from morph.
+    """
+
+    def __init__(
+        self,
+        global_crops_scale,
+        local_crops_scale,
+        local_crops_number,
+        global_crops_size=224,
+        local_crops_size=96,
+        morphology_key: str = "morphology",
+        neighborhood_key: str = "neighborhood",
+        normalize_mean=None,
+        normalize_std=None,
+    ):
+        self.morphology_key = morphology_key
+        self.neighborhood_key = neighborhood_key
+
+        mean, std = _get_normalize_params(normalize_mean, normalize_std)
+        self.normalize = transforms.Compose([
+            transforms.ToTensor(),
+            make_normalize_transform(mean=mean, std=std),
+        ])
+        color_jittering = transforms.Compose([
+            transforms.RandomApply(
+                [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
+                p=0.8,
+            ),
+            transforms.RandomGrayscale(p=0.2),
+        ])
+        global_extra1 = GaussianBlur(p=1.0)
+        global_extra2 = transforms.Compose([GaussianBlur(p=0.1), transforms.RandomSolarize(threshold=128, p=0.2)])
+        local_extra = GaussianBlur(p=0.5)
+
+        self.morph_global = transforms.Compose([
+            transforms.RandomResizedCrop(global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.RandomHorizontalFlip(p=0.5),
+        ])
+        self.micro_global = transforms.Compose([
+            transforms.RandomResizedCrop(global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.RandomHorizontalFlip(p=0.5),
+        ])
+        self.morph_local = transforms.Compose([
+            transforms.RandomResizedCrop(local_crops_size, scale=local_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.RandomHorizontalFlip(p=0.5),
+        ])
+
+        self.global_transfo1 = transforms.Compose([color_jittering, global_extra1, self.normalize])
+        self.global_transfo2 = transforms.Compose([color_jittering, global_extra2, self.normalize])
+        self.local_transfo = transforms.Compose([color_jittering, local_extra, self.normalize])
+
+        logger.info("Using MorphologyNeighborhoodSameViewAugmentation (morph-morph, micro-micro only)")
+
+    def __call__(self, sample_dict):
+        morphology_image = sample_dict[self.morphology_key]
+        neighborhood_image = sample_dict[self.neighborhood_key]
+
+        m1 = self.global_transfo1(self.morph_global(morphology_image))
+        m2 = self.global_transfo2(self.morph_global(morphology_image))
+        n1 = self.global_transfo1(self.micro_global(neighborhood_image))
+        n2 = self.global_transfo2(self.micro_global(neighborhood_image))
+
+        return {
+            "global_crops": [m1, m2, n1, n2],
+            "global_crops_teacher": [m1, m2, n1, n2],
+            "local_crops": [self.local_transfo(self.morph_local(morphology_image))],
+            "offsets": (),
+        }
+
+
+class MorphologyNeighborhoodFourWayAugmentation(object):
+    """
+    Four-way cross: all pairs among {student morph, teacher morph, student micro, teacher micro}.
+    Outputs 4 global crops: [morph_1, morph_2, micro_1, micro_2], 1 local from morph.
+    """
+
+    def __init__(
+        self,
+        global_crops_scale,
+        local_crops_scale,
+        local_crops_number,
+        global_crops_size=224,
+        local_crops_size=96,
+        morphology_key: str = "morphology",
+        neighborhood_key: str = "neighborhood",
+        normalize_mean=None,
+        normalize_std=None,
+    ):
+        self.morphology_key = morphology_key
+        self.neighborhood_key = neighborhood_key
+
+        mean, std = _get_normalize_params(normalize_mean, normalize_std)
+        self.normalize = transforms.Compose([
+            transforms.ToTensor(),
+            make_normalize_transform(mean=mean, std=std),
+        ])
+        color_jittering = transforms.Compose([
+            transforms.RandomApply(
+                [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
+                p=0.8,
+            ),
+            transforms.RandomGrayscale(p=0.2),
+        ])
+        global_extra1 = GaussianBlur(p=1.0)
+        global_extra2 = transforms.Compose([GaussianBlur(p=0.1), transforms.RandomSolarize(threshold=128, p=0.2)])
+        local_extra = GaussianBlur(p=0.5)
+
+        self.morph_global = transforms.Compose([
+            transforms.RandomResizedCrop(global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.RandomHorizontalFlip(p=0.5),
+        ])
+        self.micro_global = transforms.Compose([
+            transforms.RandomResizedCrop(global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.RandomHorizontalFlip(p=0.5),
+        ])
+        self.morph_local = transforms.Compose([
+            transforms.RandomResizedCrop(local_crops_size, scale=local_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.RandomHorizontalFlip(p=0.5),
+        ])
+
+        self.global_transfo1 = transforms.Compose([color_jittering, global_extra1, self.normalize])
+        self.global_transfo2 = transforms.Compose([color_jittering, global_extra2, self.normalize])
+        self.local_transfo = transforms.Compose([color_jittering, local_extra, self.normalize])
+
+        logger.info("Using MorphologyNeighborhoodFourWayAugmentation (all pairs)")
+
+    def __call__(self, sample_dict):
+        morphology_image = sample_dict[self.morphology_key]
+        neighborhood_image = sample_dict[self.neighborhood_key]
+
+        m1 = self.global_transfo1(self.morph_global(morphology_image))
+        m2 = self.global_transfo2(self.morph_global(morphology_image))
+        n1 = self.global_transfo1(self.micro_global(neighborhood_image))
+        n2 = self.global_transfo2(self.micro_global(neighborhood_image))
+
+        return {
+            "global_crops": [m1, m2, n1, n2],
+            "global_crops_teacher": [m1, m2, n1, n2],
+            "local_crops": [self.local_transfo(self.morph_local(morphology_image))],
+            "offsets": (),
+        }
+
+
 class RandomMixedViewAugmentation(object):
     """
     Augmentation pipeline that randomly selects either the 'morphology' or 'neighborhood'

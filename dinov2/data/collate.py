@@ -71,4 +71,6 @@ def collate_data_and_cast(samples_list, mask_ratio_tuple, mask_probability, dtyp
         "masks_weight": masks_weight,
         "upperbound": upperbound,
         "n_masked_patches": torch.full((1,), fill_value=mask_indices_list.shape[0], dtype=torch.long),
+        "n_global_crops": n_global_crops,
+        "n_local_crops": n_local_crops,
     }

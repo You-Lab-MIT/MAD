@@ -18,6 +18,8 @@ from torchvision.utils import save_image
 from dinov2.data import SamplerType, make_data_loader, make_dataset
 from dinov2.data import (
     MorphologyNeighborhoodAugmentation,
+    MorphologyNeighborhoodSameViewAugmentation,
+    MorphologyNeighborhoodFourWayAugmentation,
     SingleViewAugmentation,
     RandomMixedViewAugmentation,
     collate_data_and_cast,
@@ -270,12 +272,31 @@ def do_train(cfg, model, resume=False, wandb_run=None):
 
     dataset_name = cfg.train.dataset_path.split(":")[0]
     single_view_source = getattr(cfg.train, "single_view_source", "")
+    dual_view_mode = getattr(cfg.train, "dual_view_mode", "paired")
 
     normalize_mean = getattr(cfg.crops, "normalize_mean", None)
     normalize_std = getattr(cfg.crops, "normalize_std", None)
     norm_kw = {"normalize_mean": normalize_mean, "normalize_std": normalize_std}
 
-    if dataset_name in {"MorphNeighborhood", "MorphNeighborhoodH5"} and single_view_source == "mixed":
+    if dataset_name in {"MorphNeighborhood", "MorphNeighborhoodH5"} and dual_view_mode == "same_view":
+        data_transform = MorphologyNeighborhoodSameViewAugmentation(
+            cfg.crops.global_crops_scale,
+            cfg.crops.local_crops_scale,
+            1, 
+            global_crops_size=cfg.crops.global_crops_size,
+            local_crops_size=cfg.crops.local_crops_size,
+            **norm_kw,
+        )
+    elif dataset_name in {"MorphNeighborhood", "MorphNeighborhoodH5"} and dual_view_mode == "four_way":
+        data_transform = MorphologyNeighborhoodFourWayAugmentation(
+            cfg.crops.global_crops_scale,
+            cfg.crops.local_crops_scale,
+            1,
+            global_crops_size=cfg.crops.global_crops_size,
+            local_crops_size=cfg.crops.local_crops_size,
+            **norm_kw,
+        )
+    elif dataset_name in {"MorphNeighborhood", "MorphNeighborhoodH5"} and single_view_source == "mixed":
         data_transform = RandomMixedViewAugmentation(
             cfg.crops.global_crops_scale,
             cfg.crops.local_crops_scale,
@@ -359,7 +380,8 @@ def do_train(cfg, model, resume=False, wandb_run=None):
         max_iter,
         start_iter,
     ):
-        current_batch_size = data["collated_global_crops"].shape[0] / 2
+        n_global_crops = data.get("n_global_crops", 2)
+        current_batch_size = data["collated_global_crops"].shape[0] / n_global_crops
         if iteration > max_iter:
             return
 

@@ -177,9 +177,9 @@ class SSLMetaArch(nn.Module):
             loss.backward()
 
     def forward_backward(self, images, teacher_temp):
-        n_global_crops = 2
-        assert n_global_crops == 2
-        n_local_crops = self.cfg.crops.local_crops_number
+        n_global_crops = images.get("n_global_crops", 2)
+        n_local_crops = images.get("n_local_crops", self.cfg.crops.local_crops_number)
+        dual_view_mode = getattr(self.cfg.train, "dual_view_mode", "paired")
 
         global_crops = images["collated_global_crops"].cuda(non_blocking=True)
         local_crops = images["collated_local_crops"].cuda(non_blocking=True)
@@ -207,8 +207,11 @@ class SSLMetaArch(nn.Module):
             teacher_backbone_output_dict = self.teacher.backbone(x, is_training=True)
             teacher_cls_tokens = teacher_backbone_output_dict["x_norm_clstoken"]
             teacher_cls_tokens = teacher_cls_tokens.chunk(n_global_crops_teacher)
-            # watch out: these are chunked and cat'd in reverse so A is matched to B in the global crops dino loss
-            teacher_cls_tokens = torch.cat((teacher_cls_tokens[1], teacher_cls_tokens[0]))
+            # for 2 crops: reverse so A is matched to B; for 4 crops: concat in order
+            if n_global_crops_teacher == 2:
+                teacher_cls_tokens = torch.cat((teacher_cls_tokens[1], teacher_cls_tokens[0]))
+            else:
+                teacher_cls_tokens = torch.cat(teacher_cls_tokens, dim=0)
             ibot_teacher_patch_tokens = teacher_backbone_output_dict["x_norm_patchtokens"]
             _dim = ibot_teacher_patch_tokens.shape[-1]
             n_cls_tokens = teacher_cls_tokens.shape[0]
@@ -322,49 +325,69 @@ class SSLMetaArch(nn.Module):
         if do_ibot and not self.ibot_separate_head:
             student_global_masked_patch_tokens_after_head = outputs_list.pop(0).squeeze(0)[:n_masked_patches]
 
-        if n_local_crops > 0:
-            dino_local_crops_loss = self.dino_loss(
-                student_output_list=student_local_cls_tokens_after_head.chunk(n_local_crops),
-                teacher_out_softmaxed_centered_list=teacher_dino_softmaxed_centered_list,
-            ) / (n_global_crops_loss_terms + n_local_crops_loss_terms)
-
-            # store for display
-            loss_dict["dino_local_crops_loss"] = dino_local_crops_loss
-
-            # accumulate loss
-            loss_accumulator += self.dino_loss_weight * dino_local_crops_loss
-
-        # process global crops
-        loss_scales = 2  # this is here since we process global crops together
-
         if do_dino:
-            # compute loss
-            dino_global_crops_loss = (
-                self.dino_loss(
-                    student_output_list=[student_global_cls_tokens_after_head],
-                    teacher_out_softmaxed_centered_list=[
-                        teacher_dino_softmaxed_centered_list.flatten(0, 1)
-                    ],  # these were chunked and stacked in reverse so A is matched to B
+            teacher_flat = teacher_dino_softmaxed_centered_list.flatten(0, 1)
+            B = teacher_flat.shape[0] // n_global_crops
+
+            if dual_view_mode == "same_view" and n_global_crops == 4:
+                # same_view: morph-morph and micro-micro only. Crops 0,1=morph, 2,3=micro.
+                student_morph = student_global_cls_tokens_after_head[: 2 * B]
+                student_micro = student_global_cls_tokens_after_head[2 * B :]
+                teacher_morph = teacher_flat[: 2 * B]
+                teacher_micro = teacher_flat[2 * B :]
+
+                dino_morph_loss = self.dino_loss(
+                    student_output_list=[student_morph],
+                    teacher_out_softmaxed_centered_list=[teacher_morph],
                 )
-                * loss_scales
-                / (n_global_crops_loss_terms + n_local_crops_loss_terms)
-            )
+                dino_micro_loss = self.dino_loss(
+                    student_output_list=[student_micro],
+                    teacher_out_softmaxed_centered_list=[teacher_micro],
+                )
+                dino_global_crops_loss = (dino_morph_loss + dino_micro_loss) / 2
+
+                if n_local_crops > 0:
+                    # student_local: (B, K), teacher_morph: (2*B, K) - average teacher per sample to match
+                    teacher_morph_per_sample = teacher_morph.view(B, 2, -1).mean(dim=1)
+                    dino_local_crops_loss = self.dino_loss(
+                        student_output_list=student_local_cls_tokens_after_head.chunk(n_local_crops),
+                        teacher_out_softmaxed_centered_list=[teacher_morph_per_sample],
+                    )
+                    loss_dict["dino_local_crops_loss"] = dino_local_crops_loss
+                    loss_accumulator += self.dino_loss_weight * dino_local_crops_loss
+            else:
+                # paired or four_way: standard all-pairs loss
+                if n_local_crops > 0:
+                    dino_local_crops_loss = self.dino_loss(
+                        student_output_list=student_local_cls_tokens_after_head.chunk(n_local_crops),
+                        teacher_out_softmaxed_centered_list=teacher_dino_softmaxed_centered_list,
+                    ) / (n_global_crops_loss_terms + n_local_crops_loss_terms)
+                    loss_dict["dino_local_crops_loss"] = dino_local_crops_loss
+                    loss_accumulator += self.dino_loss_weight * dino_local_crops_loss
+
+                loss_scales = 2
+                dino_global_crops_loss = (
+                    self.dino_loss(
+                        student_output_list=[student_global_cls_tokens_after_head],
+                        teacher_out_softmaxed_centered_list=[teacher_flat],
+                    )
+                    * loss_scales
+                    / (n_global_crops_loss_terms + n_local_crops_loss_terms)
+                )
 
             loss_dict["dino_global_crops_loss"] = dino_global_crops_loss
-
-            # accumulate loss
             loss_accumulator += self.dino_loss_weight * dino_global_crops_loss
 
             student_cls_tokens = student_global_cls_tokens
+            loss_scales = 2
 
             if self.do_koleo:
+                n_koleo_chunks = min(n_global_crops, 4)
                 koleo_loss = self.cfg.dino.koleo_loss_weight * sum(
-                    self.koleo_loss(p) for p in student_cls_tokens.chunk(2)
-                )  # we don't apply koleo loss between cls tokens of a same image
+                    self.koleo_loss(p) for p in student_cls_tokens.chunk(n_koleo_chunks)
+                )
                 loss_accumulator += koleo_loss
-                loss_dict["koleo_loss"] = (
-                    koleo_loss / loss_scales
-                )  # this is to display the same losses as before but we can remove eventually
+                loss_dict["koleo_loss"] = koleo_loss / loss_scales
 
         if do_ibot:
             # compute loss
