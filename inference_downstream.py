@@ -23,6 +23,7 @@ Notes:
   - Requires your dinov2 package import path to work (same env as training).
   - If your labels parquet lost index, pass --id-column cell_uid (same as training).
 """
+# https://drive.google.com/drive/folders/1nfhyiElFCPBggNVoeOun6N6s6jm9Gy83?usp=drive_link
 
 import argparse
 import io
